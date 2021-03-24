@@ -1,6 +1,9 @@
 const Koa = require('koa')
 const consola = require('consola')
 const { Nuxt, Builder } = require('nuxt')
+const KoaBody = require('koa-body')
+const uploadInterface = require('./upload')
+
 
 const app = new Koa()
 
@@ -24,7 +27,8 @@ async function start() {
   } else {
     await nuxt.ready()
   }
-
+  app.use(KoaBody({ multipart: true }));
+  app.use(uploadInterface.routes()).use(uploadInterface.allowedMethods())
   app.use((ctx) => {
     ctx.status = 200
     ctx.respond = false // Bypass Koa's built-in response handling
