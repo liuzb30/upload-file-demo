@@ -218,6 +218,13 @@ export default {
       const hash = await this.calculateHashWorker(chunks);
       //   const hash2 = await this.calculateHashIdle(chunks);
       //   const hash3 = await this.calculateHashSample(chunks);
+      // 检查文件是否已经上传
+      const { uploaded, uploadList } = await this.checkFile();
+      if (uploaded) {
+        this.$message.success("秒传成功");
+        return;
+      }
+
       this.hash = hash;
       this.chunks = chunks.map((chunk, index) => {
         const name = `${hash}_${index}`;
@@ -229,13 +236,26 @@ export default {
           progress: 0,
         };
       });
-      await this.uploadChunks();
+      await this.uploadChunks(uploadList);
       await this.mergeRequest();
     },
-    async uploadChunks() {
+    async checkFile() {
+      const ret = await this.$http.get(
+        `/checkfile?hash=${this.hash}&ext=${this.ext}`
+      );
+      return ret.data;
+    },
+    async uploadChunks(uploadList) {
       return new Promise((resolve) => {
         const chunks = this.chunks;
         const requests = chunks
+          .map((chunk) => {
+            if (uploadList.includes(chunk.name)) {
+              chunk.progress = 100;
+            }
+            return chunk;
+          })
+          .filter((chunk) => chunk.progress !== 100)
           .map((chunk) => {
             // 构建表单数据
             const formData = new FormData();

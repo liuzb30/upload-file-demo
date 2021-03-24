@@ -40,7 +40,7 @@ router.post("/mergefile", async ctx => {
     const filename = path.resolve(UPLOAD_DIR, `${hash}.${ext}`);
     const dirname = path.resolve(UPLOAD_DIR, hash);
     if (!fse.existsSync(dirname)) {
-        ctx.body = { code: 0, message: "文件目录不存在" };
+        ctx.body = { message: "文件目录不存在" };
         return;
     }
     const uploadList = fse
@@ -51,8 +51,26 @@ router.post("/mergefile", async ctx => {
         fse.appendFileSync(filename, fse.readFileSync(uploadList[i]));
         fse.unlink(uploadList[i]);
     }
-    ctx.body = { code: 0, message: "合并成功" };
+    ctx.body = { message: "合并成功" };
 });
+
+router.get("/checkfile", async ctx => {
+    const { hash, ext } = ctx.request.query;
+    const filePath = path.resolve(UPLOAD_DIR, `${hash}.${ext}`);
+    let uploaded = false;
+    let uploadList = [];
+    if (fse.existsSync(filePath)) {
+        uploaded = true;
+    } else {
+        //   读取目录
+        uploadList = getUploadList(path.resolve(UPLOAD_DIR, hash));
+    }
+    ctx.body = { uploaded, uploadList };
+});
+
+function getUploadList(dirPath) {
+    return fse.existsSync(dirPath) ? fse.readdirSync(dirPath) : [];
+}
 
 
 module.exports = router
