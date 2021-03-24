@@ -246,37 +246,70 @@ export default {
       return ret.data;
     },
     async uploadChunks(uploadList) {
-      return new Promise((resolve) => {
-        const chunks = this.chunks;
-        const requests = chunks
-          .map((chunk) => {
-            if (uploadList.includes(chunk.name)) {
-              chunk.progress = 100;
-            }
-            return chunk;
-          })
-          .filter((chunk) => chunk.progress !== 100)
-          .map((chunk) => {
-            // 构建表单数据
-            const formData = new FormData();
-            formData.append("chunk", chunk.chunk);
-            formData.append("name", chunk.name);
-            formData.append("hash", chunk.hash);
-            return { formData, chunk };
-          })
-          .map(({ formData, chunk }) => {
-            // 发起请求
-            return this.$http.post("/uploadChunk", formData, {
-              onUploadProgress: (progressEvent) => {
-                let complete =
-                  ((progressEvent.loaded / progressEvent.total) * 100) | 0;
-                chunk.progress = complete;
-              },
-            });
-          });
-        Promise.all(requests).then(() => {
-          resolve();
+      const chunks = this.chunks;
+      // return new Promise(resolve => {
+      const requests = chunks
+        .map((chunk) => {
+          if (uploadList.includes(chunk.name)) {
+            chunk.progress = 100;
+          }
+          return chunk;
+        })
+        .filter((chunk) => chunk.progress !== 100)
+        .map((chunk) => {
+          const formData = new FormData();
+          formData.append("chunk", chunk.chunk);
+          formData.append("name", chunk.name);
+          formData.append("hash", chunk.hash);
+          return { formData, chunk };
         });
+      await this.sendRequests(requests);
+    },
+    async sendRequests(tasks, limit = 4) {
+      return new Promise((resolve, reject) => {
+        let isStop = false;
+        const len = tasks.length;
+        let count = 0;
+        const next = async () => {
+          if (isStop) {
+            return;
+          }
+          const task = tasks.shift();
+          if (task) {
+            task.error = task.error || 0;
+            const { chunk, formData } = task;
+            try {
+              await this.$http.post("/uploadChunk", formData, {
+                onUploadProgress: (progressEvent) => {
+                  let complete =
+                    ((progressEvent.loaded / progressEvent.total) * 100) | 0;
+                  chunk.progress = complete;
+                },
+              });
+              count++;
+              if (count < len) {
+                next();
+              } else {
+                resolve();
+              }
+            } catch (e) {
+              // 显示错误
+              chunk.progress = -1;
+              if (task.error < 3) {
+                task.error++;
+                tasks.unshift(task);
+                next();
+              } else {
+                isStop = true;
+                reject();
+              }
+            }
+          }
+        };
+        while (limit > 0) {
+          next();
+          limit--;
+        }
       });
     },
     async mergeRequest() {
