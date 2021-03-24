@@ -1,6 +1,6 @@
 # nuxt-demo
 
-> My grand Nuxt.js project
+> 基于nuxt实现的大文件上传demo
 
 ## Build Setup
 
