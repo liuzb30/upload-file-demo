@@ -17,6 +17,8 @@
 </template>
 
 <script>
+const CHUNK_SIZE = 100 * 1024;
+import sparkMD5 from "spark-md5";
 export default {
   data() {
     return {
@@ -48,17 +50,157 @@ export default {
     handleFileChange(e) {
       this.file = e.target.files[0];
     },
+    async blobToStr(blob) {
+      return new Promise((resolve) => {
+        const fileReader = new FileReader();
+        fileReader.onload = () => {
+          const str = fileReader.result
+            .split("")
+            .map((v) => v.charCodeAt()) //转成字符编码
+            .map((v) => v.toString(16).toUpperCase()) // 转成16进制并大写
+            .map((v) => (v.length < 2 ? "0" + v : v)) // 不足两位的前面补0
+            .join(" ");
+          resolve(str);
+        };
+        fileReader.readAsBinaryString(blob);
+      });
+    },
+    async isGif(file) {
+      // 判断文件二进制前六位信息
+      const ret = await this.blobToStr(file.slice(0, 6));
+      console.log(ret);
+      return ret === "47 49 46 38 39 61" || ret === "47 49 46 38 37 61";
+    },
+    async isPng(file) {
+      // 前八位 '89 50 4E 47 0D 0A 1A 0A'
+      const ret = await this.blobToStr(file.slice(0, 8));
+      return ret === "89 50 4E 47 0D 0A 1A 0A";
+    },
+    async isJpg(file) {
+      // 前两位 'FF D8' 后两位'FF D9'
+      const head = await this.blobToStr(file.slice(0, 2));
+      const tail = await this.blobToStr(file.slice(-2));
+      return head === "FF D8" && tail === "FF D9";
+    },
+    async isImage(file) {
+      return (
+        (await this.isGif(file)) ||
+        (await this.isPng(file)) ||
+        (await this.isJpg(file))
+      );
+    },
+    async createFileChunks(file) {
+      const chunks = [];
+      let cur = 0;
+      while (cur < file.size) {
+        chunks.push({ index: cur, chunk: file.slice(cur, cur + CHUNK_SIZE) });
+        cur += CHUNK_SIZE;
+      }
+      return chunks;
+    },
+    async calculateHashWorker(chunks) {
+      return new Promise((resolve) => {
+        // 创建一个worker
+        const worker = new Worker("/hash.js");
+        // 把chunks传过去
+        worker.postMessage({ chunks });
+        // 监听处理进度
+        worker.onmessage = (e) => {
+          const { progress, hash } = e.data;
+          if (!hash) {
+            this.hashProgress = progress;
+          } else {
+            this.hashProgress = 100;
+            resolve(hash);
+          }
+        };
+      });
+    },
+    async calculateHashIdle(chunks) {
+      return new Promise((resolve) => {
+        let count = 0;
+        const spark = new sparkMD5.ArrayBuffer();
+        const appendToSpark = (file) => {
+          return new Promise((resolve) => {
+            const fileReader = new FileReader();
+            fileReader.onload = () => {
+              spark.append(fileReader.result);
+              resolve();
+            };
+            fileReader.readAsArrayBuffer(file);
+          });
+        };
+        const workLoop = async (deadling) => {
+          while (count < chunks.length && deadling.timeRemaining() > 1) {
+            // 把chunk加入spark
+            await appendToSpark(chunks[count].chunk);
+            count++;
+            if (count < chunks.length) {
+              this.hashProgress = Number(
+                ((count * 100) / chunks.length).toFixed(2)
+              );
+            } else {
+              this.hashProgress = 100;
+              resolve(spark.end());
+            }
+          }
+          window.requestIdleCallback(workLoop);
+        };
+
+        window.requestIdleCallback(workLoop);
+      });
+    },
+    async calculateHashSample(chunks) {
+      return new Promise((resolve) => {
+        let tempChunks = [];
+        // 截取chunks
+        for (let i = 0; i < chunks.length; i++) {
+          let chunk = chunks[i].chunk;
+          if (i === 0 || i === chunks.length - 1) {
+            tempChunks.push(chunk);
+          } else {
+            const mid = CHUNK_SIZE >> 1;
+            tempChunks.push(chunk.slice(0, 2));
+            tempChunks.push(chunk.slice(mid, mid + 2));
+            tempChunks.push(chunk.slice(-2));
+          }
+        }
+        // 通过fileReader把blob加入到spark
+        const fileReader = new FileReader();
+        const spark = new sparkMD5.ArrayBuffer();
+        fileReader.readAsArrayBuffer(new Blob(tempChunks));
+        fileReader.onload = () => {
+          spark.append(fileReader.result);
+          resolve(spark.end());
+        };
+      });
+    },
     async uploadFile() {
       if (!this.file) {
         return;
       }
+
+      // 判断图片格式
+      if (!(await this.isImage(this.file))) {
+        this.$message.warning("请选择图片");
+        return;
+      }
+      // 切片
+      const chunks = await this.createFileChunks(this.file);
+      // 计算hash
+      const hash = await this.calculateHashWorker(chunks);
+      const hash2 = await this.calculateHashIdle(chunks);
+      const hash3 = await this.calculateHashSample(chunks);
+      console.log(hash);
+      console.log(hash2);
+      console.log(hash3);
+      return;
       const formData = new FormData();
       formData.append("file", this.file);
       formData.append("name", this.file.name);
       //发起请求
       const ret = await this.$http.post("/uploadfile", formData, {
         onUploadProgress: (progress) => {
-          console.log(progress);
           this.uploadProgress = ((progress.loaded / progress.total) * 100) | 0;
         },
       });
