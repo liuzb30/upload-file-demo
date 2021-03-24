@@ -24,4 +24,35 @@ router.post('/uploadfile', ctx => {
     }
 })
 
+router.post("/uploadChunk", async ctx => {
+    const { hash, name } = ctx.request.body;
+    const file = ctx.request.files.chunk;
+    const uploadDir = path.resolve(UPLOAD_DIR, hash);
+    if (!fse.existsSync(uploadDir)) {
+        fse.mkdirSync(uploadDir);
+    }
+    fse.moveSync(file.path, path.resolve(uploadDir, name));
+    ctx.body = { code: 0, message: "上传成功" };
+});
+
+router.post("/mergefile", async ctx => {
+    const { hash, ext } = ctx.request.body;
+    const filename = path.resolve(UPLOAD_DIR, `${hash}.${ext}`);
+    const dirname = path.resolve(UPLOAD_DIR, hash);
+    if (!fse.existsSync(dirname)) {
+        ctx.body = { code: 0, message: "文件目录不存在" };
+        return;
+    }
+    const uploadList = fse
+        .readdirSync(dirname)
+        .map(v => path.resolve(dirname, v))
+        .sort((a, b) => a.split("_")[1] - b.split("_")[1]);
+    for (let i = 0; i < uploadList.length; i++) {
+        fse.appendFileSync(filename, fse.readFileSync(uploadList[i]));
+        fse.unlink(uploadList[i]);
+    }
+    ctx.body = { code: 0, message: "合并成功" };
+});
+
+
 module.exports = router

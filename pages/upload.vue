@@ -13,6 +13,24 @@
     <div>
       <el-button @click="uploadFile">上传</el-button>
     </div>
+    <div class="cube-container" :style="{ width: cubeWidth + 'px' }">
+      <div class="cube" v-for="chunk in chunks" :key="chunk.name">
+        <div
+          :class="{
+            uploading: chunk.progress > 0 && chunk.progress < 100,
+            success: chunk.progress === 100,
+            error: chunk.progress === -1,
+          }"
+          :style="{ height: chunk.progress + '%' }"
+        >
+          <i
+            class="el-icon-loading"
+            style="color: #f56c6c"
+            v-if="chunk.progress < 100 && chunk.progress > 0"
+          ></i>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -23,10 +41,19 @@ export default {
   data() {
     return {
       uploadProgress: 0,
+      chunks: [],
     };
   },
   mounted() {
     this.bindEvent();
+  },
+  computed: {
+    cubeWidth() {
+      return Math.ceil(Math.sqrt(this.chunks.length)) * 16;
+    },
+    ext() {
+      return this.file.name.split(".")[1];
+    },
   },
   methods: {
     bindEvent() {
@@ -189,22 +216,55 @@ export default {
       const chunks = await this.createFileChunks(this.file);
       // 计算hash
       const hash = await this.calculateHashWorker(chunks);
-      const hash2 = await this.calculateHashIdle(chunks);
-      const hash3 = await this.calculateHashSample(chunks);
-      console.log(hash);
-      console.log(hash2);
-      console.log(hash3);
-      return;
-      const formData = new FormData();
-      formData.append("file", this.file);
-      formData.append("name", this.file.name);
-      //发起请求
-      const ret = await this.$http.post("/uploadfile", formData, {
-        onUploadProgress: (progress) => {
-          this.uploadProgress = ((progress.loaded / progress.total) * 100) | 0;
-        },
+      //   const hash2 = await this.calculateHashIdle(chunks);
+      //   const hash3 = await this.calculateHashSample(chunks);
+      this.hash = hash;
+      this.chunks = chunks.map((chunk, index) => {
+        const name = `${hash}_${index}`;
+        return {
+          name,
+          hash,
+          index,
+          chunk: chunk.chunk,
+          progress: 0,
+        };
       });
-      console.log(ret);
+      await this.uploadChunks();
+      await this.mergeRequest();
+    },
+    async uploadChunks() {
+      return new Promise((resolve) => {
+        const chunks = this.chunks;
+        const requests = chunks
+          .map((chunk) => {
+            // 构建表单数据
+            const formData = new FormData();
+            formData.append("chunk", chunk.chunk);
+            formData.append("name", chunk.name);
+            formData.append("hash", chunk.hash);
+            return { formData, chunk };
+          })
+          .map(({ formData, chunk }) => {
+            // 发起请求
+            return this.$http.post("/uploadChunk", formData, {
+              onUploadProgress: (progressEvent) => {
+                let complete =
+                  ((progressEvent.loaded / progressEvent.total) * 100) | 0;
+                chunk.progress = complete;
+              },
+            });
+          });
+        Promise.all(requests).then(() => {
+          resolve();
+        });
+      });
+    },
+    async mergeRequest() {
+      await this.$http.post("/mergefile", {
+        hash: this.hash,
+        ext: this.ext,
+        size: CHUNK_SIZE,
+      });
     },
   },
 };
@@ -216,5 +276,28 @@ export default {
   line-height: 100px;
   border: 2px dashed #eee;
   text-align: center;
+}
+
+.cube-container {
+  .cube {
+    width: 14px;
+    height: 14px;
+    line-height: 12px;
+    border: 1px black solid;
+    background: #eee;
+    float: left;
+
+    >.success {
+      background: green;
+    }
+
+    >.uploading {
+      background: blue;
+    }
+
+    >.error {
+      background: red;
+    }
+  }
 }
 </style>
